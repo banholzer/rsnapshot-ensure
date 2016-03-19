@@ -1,0 +1,78 @@
+#!/bin/bash
+## This script will ensure your rsnapshots to run, also when system was offline at last scheduled run.
+
+## Configuration
+# Intervals configured in hours. List separated by _spaces_. 
+# Intervals are matched top down to configured backup levels of rsnapshot.conf
+# The last level will be run first, so with an usual rsnapshot.conf monthly backups are run first.
+
+INTERVALS="4 24 168 720"
+RSNAPSHOT_BIN="/usr/bin/rsnapshot"
+RSNAPSHOT_CONF="/etc/rsnapshot.conf"
+PID_FILE=/var/cache/rsnapshot-ensure/$(basename $0)
+
+## STOP IF ALREADY RUNNING
+if [ -f $PID_FILE ]; then
+	if [ kill -0 $(cat $PID_FILE) ]; then
+		echo "Another instance of $(basename $0) is already running with PID $(cat $PID_FILE). Aborting."
+		exit 1
+	else
+		echo $$ > $PID_FILE
+	fi
+else
+	echo $$ > $PID_FILE
+fi
+
+
+function get_hours {
+	seconds=$(date +%s)
+	echo $((seconds/3600))
+}
+function get_configured_levels {
+	if [ -f $RSNAPSHOT_CONF ]; then
+		grep "^[ \t]*retain" $RSNAPSHOT_CONF | sed -r "s/ /\t/" | cut -f 2 -s
+	else
+		echo "$RSNAPSHOT_CONF not found"
+                exit 1
+	fi
+}
+function get_last_run {
+	if [ -f /var/cache/rsnapshot-ensure/lastrun.state ]; then
+		echo $(grep "^$1" /var/cache/rsnapshot-ensure/lastrun.state | cut -d \  -f 2 -s)
+	else 
+		echo "/var/cache/rsnapshot-ensure/lastrun.state not found"
+		exit 1
+	fi
+
+}
+function get_backup_to_do {
+	actual_hour=$(get_hours)
+	interval_count=0
+	backups=""
+	for level in $(get_configured_levels); do
+		interval_count=$(($interval_count+1))
+		interval=$(echo $INTERVALS | awk -F " " "{print \$$interval_count}")
+		lastrun=$(get_last_run $level)
+		if [ $(($actual_hour-$lastrun)) -gt $interval ]; then
+			backups="$level $backups"
+		fi
+	done
+	echo $backups
+}
+function set_last_run {
+	if $(grep -q $1 /var/cache/rsnapshot-ensure/lastrun.state); then
+		sed -ri "s/$1: .*/$1: $(get_hours)/" /var/cache/rsnapshot-ensure/lastrun.state
+	else
+		echo "$1: $(get_hours)" >> /var/cache/rsnapshot-ensure/lastrun.state 
+	fi
+}
+function do_backup {
+	for backup in $(get_backup_to_do); do
+		$RSNAPSHOT_BIN $backup
+		$(set_last_run $backup)
+	done
+}
+
+do_backup 
+rm $PID_FILE
+exit 0
