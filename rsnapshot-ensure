@@ -13,7 +13,7 @@ PID_FILE=/var/cache/rsnapshot-ensure/$(basename $0)
 
 ## STOP IF ALREADY RUNNING
 if [ -f $PID_FILE ]; then
-	if [ kill -0 $(cat $PID_FILE) ]; then
+	if /bin/kill -0 $(cat "${PID_FILE}") ; then
 		echo "Another instance of $(basename $0) is already running with PID $(cat $PID_FILE). Aborting."
 		exit 1
 	else
